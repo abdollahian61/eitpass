@@ -87,7 +87,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $package = Get-ChildItem artifacts -File | Where-Object { $_.Extension -in '.msix','.appx','.msixbundle','.appxbundle' } | Select-Object -First 1
+          $package = Get-ChildItem artifacts -File | Where-Object { $_.Extension -eq '.msix' } | Select-Object -First 1
           if (-not $package) { throw 'No Windows package available for EXE bootstrapper.' }
           $packagePath = $package.FullName
           New-Item -ItemType Directory -Force installer/payload | Out-Null
