@@ -47,25 +47,25 @@ jobs:
             Select-Object -ExpandProperty FullName
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
-      - name: Locate solution
-        id: solution
+      - name: Locate application project
+        id: application
         shell: pwsh
         run: |
-          $solution = Join-Path (Resolve-Path upstream).Path 'passbolt/passbolt-windows.sln'
-          if (-not (Test-Path -LiteralPath $solution -PathType Leaf)) {
-            throw "Expected application solution not found: $solution"
+          $project = Join-Path (Resolve-Path upstream).Path 'passbolt/passbolt-windows.csproj'
+          if (-not (Test-Path -LiteralPath $project -PathType Leaf)) {
+            throw "Expected application project not found: $project"
           }
-          Write-Host "Building application solution: $solution"
-          "path=$solution" >> $env:GITHUB_OUTPUT
+          Write-Host "Building application project without unrelated test project: $project"
+          "path=$project" >> $env:GITHUB_OUTPUT
       - name: Restore
         shell: pwsh
         run: |
-          msbuild "${{ steps.solution.outputs.path }}" /t:Restore /m /p:Configuration=Release /p:Platform=x64
+          msbuild "${{ steps.application.outputs.path }}" /t:Restore /m /p:Configuration=Release /p:Platform=x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build unsigned Windows package
         shell: pwsh
         run: |
-          msbuild "${{ steps.solution.outputs.path }}" /t:Build /m /p:Configuration=Release /p:Platform=x64 /p:AppxPackageSigningEnabled=false /p:GenerateAppxPackageOnBuild=true /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\"
+          msbuild "${{ steps.application.outputs.path }}" /t:Build /m /p:Configuration=Release /p:Platform=x64 /p:AppxPackageSigningEnabled=false /p:GenerateAppxPackageOnBuild=true /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Collect outputs and checksums
         shell: pwsh
