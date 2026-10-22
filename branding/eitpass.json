@@ -1,0 +1,13 @@
+{
+  "applicationName": "EITPass",
+  "publisher": "Fanavaran Etelaat Khebreh",
+  "serverUrl": "https://vault.eitdmz.ir",
+  "upstream": "https://github.com/passbolt/passbolt-windows",
+  "platform": "windows-x64",
+  "requestedInstallers": [
+    "msix",
+    "msi",
+    "exe"
+  ],
+  "status": "branding-metadata-only"
+}
