@@ -1,0 +1,10 @@
+*.pfx
+*.p12
+*.cer
+*.key
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+artifacts/
+build/
