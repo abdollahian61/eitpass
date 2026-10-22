@@ -51,11 +51,12 @@ jobs:
         id: solution
         shell: pwsh
         run: |
-          $solutions = @(Get-ChildItem upstream -Recurse -Filter *.sln -File)
-          if ($solutions.Count -ne 1) {
-            throw "Expected exactly one .sln; found $($solutions.Count). Review upstream structure."
+          $solution = Join-Path (Resolve-Path upstream).Path 'passbolt/passbolt-windows.sln'
+          if (-not (Test-Path -LiteralPath $solution -PathType Leaf)) {
+            throw "Expected application solution not found: $solution"
           }
-          "path=$($solutions[0].FullName)" >> $env:GITHUB_OUTPUT
+          Write-Host "Building application solution: $solution"
+          "path=$solution" >> $env:GITHUB_OUTPUT
       - name: Restore
         shell: pwsh
         run: |
