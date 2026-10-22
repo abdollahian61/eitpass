@@ -8,8 +8,8 @@ $ns.AddNamespace('p','http://schemas.microsoft.com/appx/manifest/foundation/wind
 $ns.AddNamespace('uap','http://schemas.microsoft.com/appx/manifest/uap/windows10')
 $identity = $xml.SelectSingleNode('/p:Package/p:Identity',$ns)
 $identity.SetAttribute('Name','FanavaranEtelaatKhebreh.EITPass')
-# Identity Publisher is a certificate subject, not a free-form company label.
-# Preserve upstream subject until owner supplies matching signing identity.
+# Test signing identity. Replace with the organization's code-signing certificate subject for production.
+$identity.SetAttribute('Publisher','CN=EITPass Test Signing')
 $props = $xml.SelectSingleNode('/p:Package/p:Properties',$ns)
 $props.SelectSingleNode('p:DisplayName',$ns).InnerText = 'EITPass'
 $props.SelectSingleNode('p:PublisherDisplayName',$ns).InnerText = 'Fanavaran Etelaat Khebreh'
