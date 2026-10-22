@@ -1,0 +1,73 @@
+name: Build EITPass
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: 'Passbolt upstream commit or tag (pin for releases)'
+        required: true
+        default: 'master'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout EITPass automation
+        uses: actions/checkout@v4
+
+      - name: Checkout upstream Passbolt Windows
+        uses: actions/checkout@v4
+        with:
+          repository: passbolt/passbolt-windows
+          ref: ${{ inputs.upstream_ref }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Show upstream revision
+        shell: pwsh
+        run: git -C upstream rev-parse HEAD
+
+      - name: Locate solution
+        id: solution
+        shell: pwsh
+        run: |
+          $solutions = @(Get-ChildItem upstream -Recurse -Filter *.sln)
+          if ($solutions.Count -ne 1) {
+            throw "Expected exactly one solution, found $($solutions.Count). Inspect upstream layout."
+          }
+          "path=$($solutions[0].FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore dependencies
+        shell: pwsh
+        run: msbuild "${{ steps.solution.outputs.path }}" /t:Restore /p:Configuration=Release /p:Platform=x64
+
+      - name: Build Release
+        shell: pwsh
+        run: msbuild "${{ steps.solution.outputs.path }}" /t:Build /m /p:Configuration=Release /p:Platform=x64 /p:AppxPackageSigningEnabled=false
+
+      - name: Collect build output
+        if: success()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Get-ChildItem upstream -Recurse -File -Include *.msix,*.msixbundle,*.appx,*.appxbundle |
+            Copy-Item -Destination artifacts
+          Copy-Item branding/eitpass.json artifacts/
+          if (-not (Get-ChildItem artifacts -Include *.msix,*.msixbundle,*.appx,*.appxbundle -Recurse)) {
+            Write-Warning "Build completed without an installer package. Packaging remains to be configured."
+          }
+
+      - name: Upload unsigned build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eitpass-unsigned-build
+          path: artifacts/
+          if-no-files-found: error
