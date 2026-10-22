@@ -1,12 +1,18 @@
-name: Build EITPass
+name: Build EITPass (Windows x64)
 
 on:
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: 'Passbolt upstream commit or tag (pin for releases)'
+        description: 'Reviewed upstream branch, tag, or SHA'
         required: true
         default: 'master'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build.yml'
+      - 'scripts/**'
+      - 'branding/**'
 
 permissions:
   contents: read
@@ -14,60 +20,68 @@ permissions:
 jobs:
   build:
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
-      - name: Checkout EITPass automation
+      - name: Checkout EITPass
         uses: actions/checkout@v4
-
-      - name: Checkout upstream Passbolt Windows
+      - name: Checkout Passbolt Windows
         uses: actions/checkout@v4
         with:
           repository: passbolt/passbolt-windows
-          ref: ${{ inputs.upstream_ref }}
+          ref: ${{ github.event.inputs.upstream_ref || 'master' }}
           path: upstream
           persist-credentials: false
-
-      - name: Show upstream revision
+          submodules: recursive
+      - name: Record upstream revision
         shell: pwsh
-        run: git -C upstream rev-parse HEAD
-
+        run: |
+          git -C upstream rev-parse HEAD | Out-File upstream-commit.txt
+      - name: Inspect solution and packaging projects
+        shell: pwsh
+        run: |
+          Get-ChildItem upstream -Recurse -Include *.sln,*.slnx,*.wapproj,*.appxmanifest,*.msix -File |
+            Select-Object -ExpandProperty FullName
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
       - name: Locate solution
         id: solution
         shell: pwsh
         run: |
-          $solutions = @(Get-ChildItem upstream -Recurse -Filter *.sln)
+          $solutions = @(Get-ChildItem upstream -Recurse -Filter *.sln -File)
           if ($solutions.Count -ne 1) {
-            throw "Expected exactly one solution, found $($solutions.Count). Inspect upstream layout."
+            throw "Expected exactly one .sln; found $($solutions.Count). Review upstream structure."
           }
           "path=$($solutions[0].FullName)" >> $env:GITHUB_OUTPUT
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Restore dependencies
+      - name: Restore
         shell: pwsh
-        run: msbuild "${{ steps.solution.outputs.path }}" /t:Restore /p:Configuration=Release /p:Platform=x64
-
-      - name: Build Release
+        run: |
+          msbuild "${{ steps.solution.outputs.path }}" /t:Restore /m /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build unsigned Windows package
         shell: pwsh
-        run: msbuild "${{ steps.solution.outputs.path }}" /t:Build /m /p:Configuration=Release /p:Platform=x64 /p:AppxPackageSigningEnabled=false
-
-      - name: Collect build output
-        if: success()
+        run: |
+          msbuild "${{ steps.solution.outputs.path }}" /t:Build /m /p:Configuration=Release /p:Platform=x64 /p:AppxPackageSigningEnabled=false /p:GenerateAppxPackageOnBuild=true /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Collect outputs and checksums
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts | Out-Null
-          Get-ChildItem upstream -Recurse -File -Include *.msix,*.msixbundle,*.appx,*.appxbundle |
-            Copy-Item -Destination artifacts
-          Copy-Item branding/eitpass.json artifacts/
-          if (-not (Get-ChildItem artifacts -Include *.msix,*.msixbundle,*.appx,*.appxbundle -Recurse)) {
-            Write-Warning "Build completed without an installer package. Packaging remains to be configured."
+          $packages = @(Get-ChildItem upstream,artifacts -Recurse -File -Include *.msix,*.msixbundle,*.appx,*.appxbundle | Sort-Object FullName -Unique)
+          if ($packages.Count -eq 0) {
+            throw 'No installable MSIX/AppX package produced. Inspect packaging configuration.'
           }
-
-      - name: Upload unsigned build artifacts
-        if: success()
+          foreach ($file in $packages) {
+            if (-not $file.FullName.StartsWith((Resolve-Path artifacts).Path)) {
+              Copy-Item $file.FullName -Destination artifacts -Force
+            }
+          }
+          Get-ChildItem artifacts -File | Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content artifacts/SHA256SUMS.txt
+          Copy-Item upstream-commit.txt artifacts/
+      - name: Upload unsigned package
         uses: actions/upload-artifact@v4
         with:
-          name: eitpass-unsigned-build
+          name: eitpass-windows-x64-unsigned-unbranded
           path: artifacts/
           if-no-files-found: error
