@@ -88,11 +88,12 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $package = Get-ChildItem artifacts -File | Where-Object { $_.Extension -in @('.msix', '.appx') } | Select-Object -First 1
+          $package = Get-ChildItem artifacts -Recurse -File | Where-Object { $_.Extension -in @('.msix', '.appx') -and $_.Name -match 'passbolt-windows|EITPass' -and $_.FullName -notmatch '[\\/]Dependencies[\\/]' } | Sort-Object @{Expression={ if ($_.Extension -eq '.msix') { 0 } else { 1 } }} | Select-Object -First 1
           if (-not $package) { throw 'No MSIX/AppX package available for EXE bootstrapper.' }
           $packagePath = $package.FullName
           New-Item -ItemType Directory -Force installer/payload | Out-Null
-          Copy-Item $packagePath installer/payload/EITPass.appx -Force
+          $payloadExtension = $package.Extension
+          Copy-Item $packagePath "installer/payload/EITPass$payloadExtension" -Force
           $source = @'
           using System;
           using System.Diagnostics;
@@ -100,7 +101,7 @@ jobs:
           using System.Reflection;
           class Installer {
             [STAThread] static int Main() {
-              string path = Path.Combine(Path.GetTempPath(), "EITPass-" + Guid.NewGuid().ToString("N") + ".appx");
+              string path = Path.Combine(Path.GetTempPath(), "EITPass-" + Guid.NewGuid().ToString("N") + "__PACKAGE_EXTENSION__");
               try {
                 using (var input = Assembly.GetExecutingAssembly().GetManifestResourceStream("EITPassPackage")) {
                   if (input == null) throw new Exception("Embedded package missing");
@@ -114,10 +115,11 @@ jobs:
             }
           }
           '@
+          $source = $source.Replace('__PACKAGE_EXTENSION__', $payloadExtension)
           Set-Content installer/EITPassInstaller.cs $source
           $csc = (Get-ChildItem 'C:\Windows\Microsoft.NET\Framework64' -Recurse -Filter csc.exe | Sort-Object FullName -Descending | Select-Object -First 1).FullName
           if (-not $csc) { throw 'C# compiler missing' }
-          & $csc /nologo /target:exe /out:artifacts/EITPass.exe /resource:installer/payload/EITPass.appx,EITPassPackage installer/EITPassInstaller.cs
+          & $csc /nologo /target:exe /out:artifacts/EITPass.exe "/resource:installer/payload/EITPass$payloadExtension,EITPassPackage" installer/EITPassInstaller.cs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-FileHash artifacts/EITPass.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  EITPass.exe" } | Add-Content artifacts/SHA256SUMS.txt
       - name: Upload unsigned package
