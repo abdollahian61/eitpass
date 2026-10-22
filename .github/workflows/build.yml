@@ -13,6 +13,7 @@ on:
       - '.github/workflows/build.yml'
       - 'scripts/**'
       - 'branding/**'
+      - 'installer/**'
 
 permissions:
   contents: read
@@ -82,6 +83,42 @@ jobs:
             ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } |
             Set-Content artifacts/SHA256SUMS.txt
           Copy-Item upstream-commit.txt artifacts/
+      - name: Build EXE bootstrapper for MSIX/AppX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-ChildItem artifacts -File | Where-Object { $_.Extension -in '.msix','.appx','.msixbundle','.appxbundle' } | Select-Object -First 1
+          if (-not $package) { throw 'No Windows package available for EXE bootstrapper.' }
+          $packagePath = $package.FullName
+          New-Item -ItemType Directory -Force installer/payload | Out-Null
+          Copy-Item $packagePath installer/payload/EITPass.msix -Force
+          $source = @'
+          using System;
+          using System.Diagnostics;
+          using System.IO;
+          using System.Reflection;
+          class Installer {
+            [STAThread] static int Main() {
+              string path = Path.Combine(Path.GetTempPath(), "EITPass-" + Guid.NewGuid().ToString("N") + ".msix");
+              try {
+                using (var input = Assembly.GetExecutingAssembly().GetManifestResourceStream("EITPassPackage")) {
+                  if (input == null) throw new Exception("Embedded package missing");
+                  using (var output = File.Create(path)) input.CopyTo(output);
+                }
+                var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -Command \"Add-AppxPackage -Path '" + path.Replace("'", "''") + "'\"");
+                psi.UseShellExecute = true; psi.Verb = "runas";
+                using (var p = Process.Start(psi)) { p.WaitForExit(); return p.ExitCode; }
+              } catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+              finally { try { File.Delete(path); } catch {} }
+            }
+          }
+          '@
+          Set-Content installer/EITPassInstaller.cs $source
+          $csc = (Get-ChildItem 'C:\Windows\Microsoft.NET\Framework64' -Recurse -Filter csc.exe | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          if (-not $csc) { throw 'C# compiler missing' }
+          & $csc /nologo /target:exe /out:artifacts/EITPass.exe /resource:installer/payload/EITPass.msix,EITPassPackage installer/EITPassInstaller.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-FileHash artifacts/EITPass.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  EITPass.exe" } | Add-Content artifacts/SHA256SUMS.txt
       - name: Upload unsigned package
         uses: actions/upload-artifact@v4
         with:
