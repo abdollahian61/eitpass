@@ -32,6 +32,9 @@ jobs:
           path: upstream
           persist-credentials: false
           submodules: recursive
+      - name: Apply EITPass package branding
+        shell: pwsh
+        run: ./scripts/apply-branding.ps1 -Root upstream
       - name: Record upstream revision
         shell: pwsh
         run: |
@@ -82,6 +85,6 @@ jobs:
       - name: Upload unsigned package
         uses: actions/upload-artifact@v4
         with:
-          name: eitpass-windows-x64-unsigned-unbranded
+          name: eitpass-windows-x64-unsigned-branded-manifest
           path: artifacts/
           if-no-files-found: error
