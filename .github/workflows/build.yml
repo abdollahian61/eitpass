@@ -84,19 +84,24 @@ jobs:
             ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } |
             Set-Content artifacts/SHA256SUMS.txt
           Copy-Item upstream-commit.txt artifacts/
-      - name: Sign MSIX with ephemeral test certificate
+      - name: Sign MSIX with test certificate
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $package = Get-ChildItem artifacts -Recurse -File -Filter *.msix | Where-Object { $_.Name -like 'passbolt-windows*' } | Select-Object -First 1
-          if (-not $package) { throw 'Main MSIX package not found' }
-          $cert = New-SelfSignedCertificate -Type Custom -Subject 'CN=EITPass Test Signing' -KeyUsage DigitalSignature -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddMonths(6) -KeyExportPolicy Exportable
+          if (-not $package) { throw 'Main MSIX not found' }
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=EITPass Test Signing' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddMonths(6)
           $password = [Guid]::NewGuid().ToString('N')
-          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-          $pfx = Join-Path $env:RUNNER_TEMP 'eitpass-test-signing.pfx'
-          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $securePassword | Out-Null
+          $pfx = Join-Path $env:RUNNER_TEMP 'test-signing.pfx'
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password (ConvertTo-SecureString $password -AsPlainText -Force) | Out-Null
           Export-Certificate -Cert $cert -FilePath 'artifacts/EITPass-Test-Signing.cer' | Out-Null
-          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -File | Where-Object { $_.FullName -match '[\\/]x64[\\/]signtool.exe
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -File | Where-Object { $_.DirectoryName.EndsWith('x64') } | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw 'SignTool not found' }
+          & $signtool sign /fd SHA256 /f $pfx /p $password $package.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item $pfx -Force
+          Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force
+      - name: Build EXE bootstrapper for MSIX/AppX
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
