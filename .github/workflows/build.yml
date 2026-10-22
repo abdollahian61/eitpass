@@ -119,7 +119,10 @@ jobs:
           Set-Content installer/EITPassInstaller.cs $source
           $csc = (Get-ChildItem 'C:\Windows\Microsoft.NET\Framework64' -Recurse -Filter csc.exe | Sort-Object FullName -Descending | Select-Object -First 1).FullName
           if (-not $csc) { throw 'C# compiler missing' }
-          & $csc /nologo /target:exe /out:artifacts/EITPass.exe "/resource:installer/payload/EITPass$payloadExtension,EITPassPackage" installer/EITPassInstaller.cs
+          $sourcePath = (Resolve-Path installer/EITPassInstaller.cs).Path
+          $resourcePath = (Resolve-Path "installer/payload/EITPass$payloadExtension").Path
+          $exePath = Join-Path (Resolve-Path artifacts).Path "EITPass.exe"
+          & $csc /nologo /target:exe "/out:$exePath" "/resource:$resourcePath,EITPassPackage" "$sourcePath"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-FileHash artifacts/EITPass.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  EITPass.exe" } | Add-Content artifacts/SHA256SUMS.txt
       - name: Upload unsigned package
