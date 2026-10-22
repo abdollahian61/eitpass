@@ -84,6 +84,76 @@ jobs:
             ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } |
             Set-Content artifacts/SHA256SUMS.txt
           Copy-Item upstream-commit.txt artifacts/
+      - name: Sign MSIX with ephemeral test certificate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-ChildItem artifacts -Recurse -File -Filter *.msix | Where-Object { $_.Name -like 'passbolt-windows*' } | Select-Object -First 1
+          if (-not $package) { throw 'Main MSIX package not found' }
+          $cert = New-SelfSignedCertificate -Type Custom -Subject 'CN=EITPass Test Signing' -KeyUsage DigitalSignature -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddMonths(6) -KeyExportPolicy Exportable
+          $password = [Guid]::NewGuid().ToString('N')
+          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+          $pfx = Join-Path $env:RUNNER_TEMP 'eitpass-test-signing.pfx'
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $securePassword | Out-Null
+          Export-Certificate -Cert $cert -FilePath 'artifacts/EITPass-Test-Signing.cer' | Out-Null
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -File | Where-Object { $_.FullName -match '[\\/]x64[\\/]signtool.exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-ChildItem artifacts -Recurse -File | Where-Object { $_.Extension -in @('.msix', '.appx') -and $_.Name -match 'passbolt-windows|EITPass' -and $_.FullName -notmatch '[\\/]Dependencies[\\/]' } | Sort-Object @{Expression={ if ($_.Extension -eq '.msix') { 0 } else { 1 } }} | Select-Object -First 1
+          if (-not $package) { throw 'No MSIX/AppX package available for EXE bootstrapper.' }
+          $packagePath = $package.FullName
+          New-Item -ItemType Directory -Force installer/payload | Out-Null
+          $payloadExtension = $package.Extension
+          Copy-Item $packagePath "installer/payload/EITPass$payloadExtension" -Force
+          $source = @'
+          using System;
+          using System.Diagnostics;
+          using System.IO;
+          using System.Reflection;
+          class Installer {
+            [STAThread] static int Main() {
+              string path = Path.Combine(Path.GetTempPath(), "EITPass-" + Guid.NewGuid().ToString("N") + "__PACKAGE_EXTENSION__");
+              try {
+                using (var input = Assembly.GetExecutingAssembly().GetManifestResourceStream("EITPassPackage")) {
+                  if (input == null) throw new Exception("Embedded package missing");
+                  using (var output = File.Create(path)) input.CopyTo(output);
+                }
+                var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -Command \"Add-AppxPackage -Path '" + path.Replace("'", "''") + "'\"");
+                psi.UseShellExecute = true; psi.Verb = "runas";
+                using (var p = Process.Start(psi)) { p.WaitForExit(); return p.ExitCode; }
+              } catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+              finally { try { File.Delete(path); } catch {} }
+            }
+          }
+          '@
+          $source = $source.Replace('__PACKAGE_EXTENSION__', $payloadExtension)
+          Set-Content installer/EITPassInstaller.cs $source
+          $csc = (Get-ChildItem 'C:\Windows\Microsoft.NET\Framework64' -Recurse -Filter csc.exe | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          if (-not $csc) { throw 'C# compiler missing' }
+          $sourcePath = (Resolve-Path installer/EITPassInstaller.cs).Path
+          $resourcePath = (Resolve-Path "installer/payload/EITPass$payloadExtension").Path
+          $exePath = Join-Path (Resolve-Path artifacts).Path "EITPass.exe"
+          & $csc /nologo /target:exe "/out:$exePath" "/resource:$resourcePath,EITPassPackage" "$sourcePath"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-FileHash artifacts/EITPass.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  EITPass.exe" } | Add-Content artifacts/SHA256SUMS.txt
+      - name: Upload unsigned package
+        uses: actions/upload-artifact@v4
+        with:
+          name: eitpass-windows-x64-unsigned-branded-manifest
+          path: artifacts/
+          if-no-files-found: error
+ } | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw 'SignTool not found' }
+          & $signtool sign /fd SHA256 /f $pfx /p $password $package.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $signtool verify /pa /v $package.FullName
+          if ($LASTEXITCODE -ne 0) { Write-Host 'Untrusted root expected for ephemeral test certificate; verify signature independently after installing test certificate.' }
+          Remove-Item $pfx -Force
+          Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force
+          Get-ChildItem artifacts -Recurse -File -Filter *.msix | Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash)  $($_.Path.Substring((Resolve-Path artifacts).Path.Length + 1))" } |
+            Add-Content artifacts/SHA256SUMS.txt
       - name: Build EXE bootstrapper for MSIX/AppX
         shell: pwsh
         run: |
