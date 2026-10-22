@@ -9,5 +9,16 @@
     "msi",
     "exe"
   ],
-  "status": "branding-metadata-only"
+  "icon": {
+    "source": "approved EITPass red emblem",
+    "transparentBackground": true,
+    "files": [
+      "EITPass-Icon.png",
+      "EITPass-Icon-256.png",
+      "EITPass.ico"
+    ],
+    "status": "approved; binary assets pending repository upload"
+  },
+  "signing": "handled separately by repository owner",
+  "status": "branding metadata; upstream UI integration pending"
 }
